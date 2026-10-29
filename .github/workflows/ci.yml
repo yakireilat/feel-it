@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: engine/package-lock.json
+      - run: npm ci
+      - name: Unit tests
+        run: npm test
+      - name: Smoke test (server in WhatsApp dry-run mode)
+        run: ./scripts/smoke.sh
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t feel-it-engine engine
+      - name: Container answers /health
+        run: |
+          docker run -d --name engine -p 8080:8080 \
+            -e SECRET_DEMO_BARBER=ci -e CLIENTS_DIR=/config/clients \
+            -v "$PWD/engine/clients:/config/clients:ro" feel-it-engine
+          for i in $(seq 30); do curl -sf localhost:8080/health && exit 0; sleep 1; done
+          docker logs engine; exit 1

@@ -5,5 +5,6 @@ RUN npm ci --omit=dev
 COPY src ./src
 RUN mkdir /data && chown node:node /data
 USER node
+ENV DATA_DIR=/data CLIENTS_DIR=/config/clients
 EXPOSE 8080
 CMD ["node", "src/index.js"]
