@@ -1,0 +1,26 @@
+{
+  "id": "demo-barber",
+  "name": "המספרה של דני",
+  "vertical": "barbershop",
+  "about": "Neighborhood barbershop, walk-ins and appointments, kids' cuts on Fridays.",
+  "timezone": "Asia/Jerusalem",
+  "ownerPhone": "972500000000",
+  "webhookSecretEnv": "SECRET_DEMO_BARBER",
+  "businessHours": {
+    "sun": ["09:00", "20:00"], "mon": ["09:00", "20:00"], "tue": ["09:00", "20:00"],
+    "wed": ["09:00", "20:00"], "thu": ["09:00", "21:00"], "fri": ["08:00", "14:00"], "sat": null
+  },
+  "missedCall": {
+    "enabled": true,
+    "bookingUrl": "https://example.com/book/demo-barber",
+    "cooldownHours": 12
+  },
+  "reviews": {
+    "enabled": true,
+    "googleReviewUrl": "https://g.page/r/EXAMPLE/review",
+    "delayMinutes": 90,
+    "cooldownDays": 60,
+    "alertBelowRating": 3
+  },
+  "digest": { "enabled": true, "time": "21:00" }
+}

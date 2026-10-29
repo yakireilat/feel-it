@@ -1,0 +1,18 @@
+services:
+  engine:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      CLIENTS_DIR: /config/clients
+      DATA_DIR: /data
+    volumes:
+      - ./clients:/config/clients:ro
+      - engine-data:/data
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 1m
+volumes:
+  engine-data:
