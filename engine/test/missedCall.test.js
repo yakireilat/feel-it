@@ -47,7 +47,7 @@ test('hidden numbers are logged but not messaged', async () => {
 });
 
 test('send failures are recorded and do not start the cooldown', async () => {
-  const { ctx, client } = setup({ failSend: true });
+  const { ctx, client } = setup({ failSend: 400 });
   assert.equal((await handleMissedCall(ctx, client, { from: '0501234567' })).status, 'failed');
   const types = ctx.store.events(client.id).map((e) => e.type);
   assert.deepEqual(types, ['error', 'missed_call']);

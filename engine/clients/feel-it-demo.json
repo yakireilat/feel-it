@@ -1,0 +1,22 @@
+{
+  "id": "feel-it-demo",
+  "name": "Feel It",
+  "vertical": "demo line for the landing page",
+  "about": "Live demo: prospects call this number, don't get an answer, and receive the WhatsApp their customers would get.",
+  "timezone": "Asia/Jerusalem",
+  "ownerPhone": "972500000000",
+  "webhookSecretEnv": "SECRET_FEEL_IT_DEMO",
+  "whatsappPhoneNumberId": "100000000000002",
+  "businessHours": {
+    "sun": ["00:00", "23:59"], "mon": ["00:00", "23:59"], "tue": ["00:00", "23:59"],
+    "wed": ["00:00", "23:59"], "thu": ["00:00", "23:59"], "fri": ["00:00", "23:59"], "sat": ["00:00", "23:59"]
+  },
+  "missedCall": {
+    "enabled": true,
+    "bookingUrl": "https://yakireilat.github.io/feel-it/#contact",
+    "cooldownHours": 1,
+    "messageOpen": "היי, כאן Feel It 👋\nזו בדיוק ההודעה שהלקוחות שלכם יקבלו כשלא תספיקו לענות – תוך שניות, עם קישור לקביעת תור.\nרוצים את זה בעסק שלכם? {link}\nאפשר גם פשוט לכתוב לנו כאן."
+  },
+  "reviews": { "enabled": false },
+  "digest": { "enabled": false }
+}

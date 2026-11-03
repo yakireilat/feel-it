@@ -40,17 +40,18 @@ export function handleVisit(ctx, client, { phone, name, at }) {
 export async function processOutbox(ctx, client) {
   const cfg = config(client);
   const now = ctx.now();
-  const due = (ctx.store.getState(client.id).outbox ?? []).filter((i) => i.sendAt <= now);
+  const due = (ctx.store.getState(client.id).outbox ?? []).filter((i) => i.kind === 'review_request' && i.sendAt <= now);
   if (!due.length || !isWithin(cfg.sendWindow, localParts(new Date(now), client.timezone))) return 0;
 
   let sentCount = 0;
   for (const item of due) {
     const vars = { name: item.name || '', business: client.name, link: cfg.googleReviewUrl };
     const text = render(cfg.requestMessage, vars).replace('היי ,', 'היי,');
-    const sent = await ctx.send(client, 'review_request', cfg.template
+    const status = await ctx.send(client, 'review_request', cfg.template
       ? { to: item.phone, template: { ...cfg.template, params: [item.name || '', client.name, cfg.googleReviewUrl] } }
       : { to: item.phone, text });
-    // Failed sends are dropped rather than retried forever; the error is already recorded and alerted.
+    // Temporary failures are retried by the generic outbox; permanent ones and opted-out customers are dropped.
+    const sent = status === 'sent' || status === 'queued';
     ctx.store.updateState(client.id, (s) => ({
       ...s,
       outbox: (s.outbox ?? []).filter((i) => !(i.kind === item.kind && i.phone === item.phone)),
@@ -71,7 +72,7 @@ function fallbackDraft(review) {
     : `${name ? name + ', ' : ''}תודה על המשוב, ואנחנו מצטערים שהחוויה לא הייתה כמו שציפית. נשמח אם תיצור/י איתנו קשר ישירות כדי שנוכל לתקן.`;
 }
 
-// A new Google review arrived: draft a reply with AI and send it to the owner to approve and post.
+// A new Google review arrived: draft a reply with AI and send it to the owner to approve.
 export async function handleReview(ctx, client, review) {
   const cfg = config(client);
   const rating = Number(review.rating);
@@ -91,11 +92,35 @@ export async function handleReview(ctx, client, review) {
   draft ??= fallbackDraft(r);
 
   const urgent = rating <= cfg.alertBelowRating;
-  ctx.store.append(client.id, 'review_received', { rating, urgent, drafter, author: r.author, draft }, ctx.now());
+  const reviewId = review.reviewId ? String(review.reviewId) : null;
+  ctx.store.append(client.id, 'review_received', { rating, urgent, drafter, author: r.author, reviewId, draft }, ctx.now());
+  ctx.store.updateState(client.id, (s) => ({
+    ...s,
+    pendingReviews: [...(s.pendingReviews ?? []), { reviewId, author: r.author, rating, draft, at: ctx.now() }].slice(-20),
+  }));
 
   const header = urgent ? '⚠️ ביקורת נמוכה – כדאי לטפל היום\n' : '';
   const quoted = r.text ? `\n"${r.text}"\n` : '\n';
-  const text = `${header}⭐ ביקורת חדשה (${rating}/5) מאת ${r.author || 'אנונימי'}:${quoted}\nהצעה לתגובה:\n${draft}`;
-  const sent = await ctx.send(client, 'review_notify_owner', { to: client.ownerPhone, text });
-  return { status: sent ? 'owner_notified' : 'failed', urgent, drafter, draft };
+  const howTo = reviewId && client.google
+    ? 'השיבו 1 כדי לפרסם את התגובה בגוגל, או כתבו "תגובה: ..." כדי לפרסם נוסח אחר.'
+    : 'אפשר להעתיק את התגובה ולפרסם אותה בגוגל.';
+  const text = `${header}⭐ ביקורת חדשה (${rating}/5) מאת ${r.author || 'אנונימי'}:${quoted}\nהצעה לתגובה:\n${draft}\n\n${howTo}`;
+  const status = await ctx.send(client, 'review_notify_owner', { to: client.ownerPhone, text });
+  return { status: status === 'failed' ? 'failed' : 'owner_notified', urgent, drafter, draft };
+}
+
+// The owner approved the latest pending reply (optionally with their own wording): post it to Google.
+export async function approveLatestReview(ctx, client, customText = null) {
+  const pending = ctx.store.getState(client.id).pendingReviews ?? [];
+  const review = pending.at(-1);
+  if (!review) return { status: 'none_pending' };
+  const comment = customText?.trim() || review.draft;
+
+  if (!review.reviewId || !client.google || !ctx.google) {
+    return { status: 'manual', comment };
+  }
+  await ctx.google.replyToReview(client.google, review.reviewId, comment);
+  ctx.store.updateState(client.id, (s) => ({ ...s, pendingReviews: (s.pendingReviews ?? []).slice(0, -1) }));
+  ctx.store.append(client.id, 'review_reply_posted', { reviewId: review.reviewId }, ctx.now());
+  return { status: 'posted', comment, author: review.author };
 }

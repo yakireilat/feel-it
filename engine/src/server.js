@@ -1,8 +1,9 @@
 import { createServer } from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { handleMissedCall } from './modules/missedCall.js';
 import { handleReview, handleVisit } from './modules/reviews.js';
 import { computeDigest, formatDigest, runDigest } from './modules/digest.js';
+import { handleInbound } from './modules/inbound.js';
 import { DAY } from './util.js';
 
 const MAX_BODY = 64 * 1024;
@@ -14,7 +15,10 @@ const HOOKS = {
     if (body.CallStatus && !MISSED_STATUSES.has(body.CallStatus)) return { status: 'ignored', reason: 'answered' };
     return handleMissedCall(ctx, client, { from: body.from ?? body.From ?? body.caller, at: body.at });
   },
-  visit: (ctx, client, body) => handleVisit(ctx, client, body),
+  // A single visit, or { visits: [...] } for a batch (e.g. a day's appointments exported from a booking app).
+  visit: (ctx, client, body) => (Array.isArray(body.visits)
+    ? { results: body.visits.slice(0, 500).map((v) => handleVisit(ctx, client, v)) }
+    : handleVisit(ctx, client, body)),
   review: (ctx, client, body) => handleReview(ctx, client, body),
 };
 
@@ -24,7 +28,7 @@ function safeEqual(a, b) {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-async function readBody(req) {
+async function readRaw(req) {
   let size = 0;
   const chunks = [];
   for await (const chunk of req) {
@@ -32,7 +36,11 @@ async function readBody(req) {
     if (size > MAX_BODY) throw Object.assign(new Error('body too large'), { status: 413 });
     chunks.push(chunk);
   }
-  const raw = Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+async function readBody(req) {
+  const raw = await readRaw(req);
   if (!raw) return {};
   // Some senders (curl -d, no-code tools) label JSON as a form, so trust the body's shape over the header.
   const isForm = (req.headers['content-type'] || '').includes('application/x-www-form-urlencoded');
@@ -44,6 +52,38 @@ async function readBody(req) {
   } catch {
     throw Object.assign(new Error('invalid JSON'), { status: 400 });
   }
+}
+
+// Link previews (WhatsApp, Facebook, other bots) fetch the link without a person clicking it.
+const PREVIEW_BOT = /whatsapp|facebookexternalhit|bot|crawler|spider|preview/i;
+
+// Meta sends one webhook per WhatsApp number; route each message to the client that owns that number.
+function routeInbound(ctx, phoneNumberId, from) {
+  const clients = [...ctx.clients.values()];
+  return clients.find((c) => c.whatsappPhoneNumberId && c.whatsappPhoneNumberId === phoneNumberId)
+    ?? clients.find((c) => ctx.isOwner(c, from) && (!c.whatsappPhoneNumberId || c.whatsappPhoneNumberId === phoneNumberId))
+    ?? (clients.length === 1 ? clients[0] : null);
+}
+
+async function handleWhatsAppWebhook(ctx, raw, signature, appSecret) {
+  const expected = 'sha256=' + createHmac('sha256', appSecret).update(raw).digest('hex');
+  if (!safeEqual(signature, expected)) return { status: 401 };
+  const payload = JSON.parse(raw || '{}');
+  let handled = 0;
+  for (const change of (payload.entry ?? []).flatMap((e) => e.changes ?? [])) {
+    const value = change.value ?? {};
+    for (const m of value.messages ?? []) {
+      const client = routeInbound(ctx, value.metadata?.phone_number_id, m.from);
+      if (!client) {
+        ctx.log.error?.(`[whatsapp] no client for number ${value.metadata?.phone_number_id}`);
+        continue;
+      }
+      const text = m.text?.body ?? m.button?.text ?? m.interactive?.button_reply?.title ?? '';
+      await handleInbound(ctx, client, { from: m.from, text, at: Number(m.timestamp) * 1000 || undefined });
+      handled++;
+    }
+  }
+  return { status: 200, handled };
 }
 
 function clientHealth(ctx, client) {
@@ -61,7 +101,11 @@ function clientHealth(ctx, client) {
   };
 }
 
-export function createHttpServer(ctx, { adminToken = process.env.ADMIN_TOKEN } = {}) {
+export function createHttpServer(ctx, {
+  adminToken = process.env.ADMIN_TOKEN,
+  whatsappVerifyToken = process.env.WHATSAPP_VERIFY_TOKEN,
+  whatsappAppSecret = process.env.WHATSAPP_APP_SECRET,
+} = {}) {
   const startedAt = ctx.now();
 
   return createServer(async (req, res) => {
@@ -74,6 +118,32 @@ export function createHttpServer(ctx, { adminToken = process.env.ADMIN_TOKEN } =
 
       if (req.method === 'GET' && url.pathname === '/health') {
         return reply(200, { ok: true, uptimeSec: Math.round((ctx.now() - startedAt) / 1000) });
+      }
+
+      // Meta's one-time webhook verification.
+      if (req.method === 'GET' && url.pathname === '/webhooks/whatsapp') {
+        const ok = whatsappVerifyToken && url.searchParams.get('hub.mode') === 'subscribe'
+          && safeEqual(url.searchParams.get('hub.verify_token'), whatsappVerifyToken);
+        res.writeHead(ok ? 200 : 403, { 'Content-Type': 'text/plain' });
+        return res.end(ok ? url.searchParams.get('hub.challenge') ?? '' : 'forbidden');
+      }
+      if (req.method === 'POST' && url.pathname === '/webhooks/whatsapp') {
+        if (!whatsappAppSecret) return reply(503, { error: 'WHATSAPP_APP_SECRET not configured' });
+        const result = await handleWhatsAppWebhook(ctx, await readRaw(req), req.headers['x-hub-signature-256'], whatsappAppSecret);
+        return reply(result.status, result.status === 200 ? { handled: result.handled } : { error: 'bad signature' });
+      }
+
+      // Tracked booking link from a missed-call message.
+      const link = req.method === 'GET' && url.pathname.match(/^\/r\/([a-z0-9-]+)\/([\w-]{4,32})$/);
+      if (link) {
+        const client = ctx.clients.get(link[1]);
+        if (!client) return reply(404, { error: 'not found' });
+        const target = ctx.store.getState(client.id).links?.[link[2]];
+        if (target && !PREVIEW_BOT.test(req.headers['user-agent'] ?? '')) {
+          ctx.store.append(client.id, 'booking_click', { phone: target.phone }, ctx.now());
+        }
+        res.writeHead(302, { Location: target?.url ?? client.missedCall?.bookingUrl ?? '/' });
+        return res.end();
       }
 
       const hook = url.pathname.match(/^\/hooks\/([a-z0-9-]+)\/([a-z-]+)$/);
