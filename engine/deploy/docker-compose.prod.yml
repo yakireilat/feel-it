@@ -1,0 +1,20 @@
+# Production override: HTTPS in front of the engine, which is no longer exposed directly.
+# Used by deploy/setup.sh:  docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
+services:
+  engine:
+    ports: !reset []
+  caddy:
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    depends_on: [engine]
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+volumes:
+  caddy-data:
+  caddy-config:
