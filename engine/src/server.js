@@ -4,7 +4,7 @@ import { handleMissedCall } from './modules/missedCall.js';
 import { handleReview, handleVisit } from './modules/reviews.js';
 import { computeDigest, formatDigest, runDigest } from './modules/digest.js';
 import { handleInbound } from './modules/inbound.js';
-import { DAY } from './util.js';
+import { DAY, normalizePhone } from './util.js';
 
 const MAX_BODY = 64 * 1024;
 // Twilio-style status callbacks report every call; only these mean "nobody picked up".
@@ -156,13 +156,25 @@ export function createHttpServer(ctx, {
         return reply(200, result);
       }
 
-      const admin = url.pathname.match(/^\/admin(?:\/([a-z0-9-]+))?\/(health|digest)$/);
+      const admin = url.pathname.match(/^\/admin(?:\/([a-z0-9-]+))?\/(health|digest|test-reset)$/);
       if (admin && adminToken) {
         if (!safeEqual(req.headers.authorization, `Bearer ${adminToken}`)) return reply(401, { error: 'unauthorized' });
         if (req.method === 'GET' && admin[2] === 'health' && !admin[1]) {
           return reply(200, { ok: true, clients: [...ctx.clients.values()].map((c) => clientHealth(ctx, c)) });
         }
         const client = ctx.clients.get(admin[1]);
+        // Lets a live test repeat on the same phone: clears its cooldowns, opt-out and queued review request.
+        if (client && admin[2] === 'test-reset' && req.method === 'POST') {
+          const phone = normalizePhone((await readBody(req)).phone);
+          if (!phone) return reply(400, { error: 'phone required' });
+          const drop = (map) => Object.fromEntries(Object.entries(map ?? {}).filter(([p]) => p !== phone));
+          ctx.store.updateState(client.id, (s) => ({
+            ...s,
+            missedCallSentAt: drop(s.missedCallSentAt), reviewAskedAt: drop(s.reviewAskedAt), optOut: drop(s.optOut),
+            outbox: (s.outbox ?? []).filter((i) => i.phone !== phone && i.message?.to !== phone),
+          }));
+          return reply(200, { reset: phone });
+        }
         if (client && admin[2] === 'digest') {
           if (req.method === 'GET') return reply(200, { text: formatDigest(client, computeDigest(ctx, client)) });
           if (req.method === 'POST') return reply(200, await runDigest(ctx, client));

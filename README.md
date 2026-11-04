@@ -49,6 +49,30 @@ docker compose up -d --build
 
 Local runs without Docker: `SECRET_DEMO_BARBER=dev ADMIN_TOKEN=dev npm start`.
 
+### Deploy to a server
+
+On a fresh Ubuntu VPS (e.g. Hetzner CX22), after pointing a domain's DNS A record at it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yakireilat/feel-it/main/engine/deploy/setup.sh | bash -s -- engine.example.co.il
+```
+
+This installs Docker, opens ports 22/80/443, clones the repo to `/opt/feel-it`, generates secrets in `.env`, and starts the engine behind Caddy (automatic HTTPS). Re-run it to update the code; existing secrets are kept. Use `BRANCH=dev` to deploy the dev branch.
+
+### Test live with your phone
+
+1. In Meta for Developers, create an app with WhatsApp, and add your phone as a test recipient of the free test number.
+2. In `/opt/feel-it/engine/.env`, set `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` and `WHATSAPP_APP_SECRET`. Put the test number's ID in the client's `whatsappPhoneNumberId`. Re-run `setup.sh`.
+3. Meta webhook: `https://<domain>/webhooks/whatsapp`, with the `WHATSAPP_VERIFY_TOKEN` from `.env`; subscribe to `messages`.
+4. From your phone, message the test number once (this opens WhatsApp's 24h window, so no templates are needed yet).
+5. Run the guided test, which walks through each automation and tells you what should arrive:
+
+```bash
+cd /opt/feel-it/engine && ./scripts/test-live.sh 0538274184
+```
+
+The owner's phone (`ownerPhone`) counts as the owner, not a customer, so the opt-out and forwarding steps need a second phone. `POST /admin/:client/test-reset` with `{"phone": "..."}` clears that phone's cooldowns and opt-out so tests can repeat.
+
 ### Webhooks
 
 All need the client's secret: header `x-webhook-secret`, or `?key=` for providers that can't set headers.

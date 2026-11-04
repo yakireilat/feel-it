@@ -110,3 +110,14 @@ test('visit webhook accepts a batch', async () => {
   const body = await res.json();
   assert.deepEqual(body.results.map((r) => r.status), ['queued', 'skipped']);
 });
+
+test('admin test-reset clears cooldowns and opt-out for one phone', async () => {
+  const { handleMissedCall } = await import('../src/modules/missedCall.js');
+  await handleMissedCall(ctx, client, { from: '0531112222' });
+  ctx.store.updateState(client.id, (s) => ({ ...s, optOut: { '972531112222': 1 } }));
+  const res = await post(`/admin/${client.id}/test-reset`, { phone: '053-111-2222' }, { authorization: 'Bearer admin-token' });
+  assert.deepEqual(await res.json(), { reset: '972531112222' });
+  const state = ctx.store.getState(client.id);
+  assert.equal(state.missedCallSentAt['972531112222'], undefined);
+  assert.equal(state.optOut['972531112222'], undefined);
+});
