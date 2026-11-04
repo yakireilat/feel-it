@@ -10,7 +10,8 @@ export function createWhatsApp({
 } = {}) {
   const sent = [];
 
-  async function send({ to, text, template }) {
+  // phoneNumberId lets each client send from its own WhatsApp number; falls back to the shared one.
+  async function send({ to, text, template, phoneNumberId: from }) {
     const body = template
       ? {
           messaging_product: 'whatsapp', to, type: 'template',
@@ -23,16 +24,18 @@ export function createWhatsApp({
       : { messaging_product: 'whatsapp', to, type: 'text', text: { body: text } };
 
     if (dryRun) {
-      sent.push({ to, text, template });
+      sent.push({ to, text, template, phoneNumberId: from });
       log.info?.(`[whatsapp:dry-run] -> ${to}: ${text ?? `template ${template.name}`}`);
       return { dryRun: true };
     }
-    const res = await fetchImpl(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`, {
+    const res = await fetchImpl(`https://graph.facebook.com/${apiVersion}/${from || phoneNumberId}/messages`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`WhatsApp API ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    if (!res.ok) {
+      throw Object.assign(new Error(`WhatsApp API ${res.status}: ${(await res.text()).slice(0, 300)}`), { status: res.status });
+    }
     return res.json();
   }
 

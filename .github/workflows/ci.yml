@@ -33,7 +33,7 @@ jobs:
       - name: Container answers /health
         run: |
           docker run -d --name engine -p 8080:8080 \
-            -e SECRET_DEMO_BARBER=ci -e CLIENTS_DIR=/config/clients \
+            -e SECRET_DEMO_BARBER=ci -e SECRET_FEEL_IT_DEMO=ci -e CLIENTS_DIR=/config/clients \
             -v "$PWD/engine/clients:/config/clients:ro" feel-it-engine
           for i in $(seq 30); do curl -sf localhost:8080/health && exit 0; sleep 1; done
           docker logs engine; exit 1

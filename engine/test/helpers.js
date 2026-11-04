@@ -13,15 +13,23 @@ export function demoClient(overrides = {}) {
   return { ...base, webhookSecret: 'test-secret', ...overrides };
 }
 
-export function setup({ client = demoClient(), ai = null, at = SUNDAY_NOON, failSend = false } = {}) {
+// failSend: false, or the HTTP status to fail with (e.g. 400 permanent, 500 temporary).
+export function setup({ client = demoClient(), ai = null, google = null, at = SUNDAY_NOON, failSend = false, publicUrl = null } = {}) {
   const clock = { now: at };
   const silent = { info() {}, error() {} };
   const whatsapp = createWhatsApp({ dryRun: true, log: silent });
-  if (failSend) whatsapp.send = async () => { throw new Error('WhatsApp API 500: boom'); };
+  const realSend = whatsapp.send;
+  whatsapp.failures = 0;
+  whatsapp.send = async (msg) => {
+    if (failSend && whatsapp.failures++ < (whatsapp.failLimit ?? Infinity)) {
+      throw Object.assign(new Error(`WhatsApp API ${failSend}: boom`), { status: failSend });
+    }
+    return realSend(msg);
+  };
   const ctx = createContext({
     clients: new Map([[client.id, client]]),
     store: new Store(mkdtempSync(join(tmpdir(), 'engine-test-'))),
-    whatsapp, ai, now: () => clock.now, opsPhone: null, log: silent,
+    whatsapp, ai, google, now: () => clock.now, opsPhone: null, publicUrl, log: silent,
   });
-  return { ctx, client, clock, sent: whatsapp.sent };
+  return { ctx, client, clock, whatsapp, sent: whatsapp.sent };
 }

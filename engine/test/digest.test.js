@@ -40,7 +40,7 @@ test('scheduler sends the digest to the owner', async () => {
 });
 
 test('failed digest is not retried every minute', async () => {
-  const { ctx, client } = setup({ failSend: true });
+  const { ctx, client } = setup({ failSend: 400 });
   assert.equal((await runDigest(ctx, client)).sent, false);
   assert.equal(ctx.store.getState(client.id).lastDigestDate, '2026-11-01');
 });

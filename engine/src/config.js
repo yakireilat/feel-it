@@ -25,5 +25,9 @@ export function validateClient(c, label = c?.id) {
   if (!c.webhookSecretEnv) errors.push('webhookSecretEnv is required');
   if (c.missedCall?.enabled && !c.missedCall.bookingUrl) errors.push('missedCall.bookingUrl is required');
   if (c.reviews?.enabled && !c.reviews.googleReviewUrl) errors.push('reviews.googleReviewUrl is required');
+  if (c.google && !(c.google.accountId && c.google.locationId && c.google.refreshTokenEnv)) {
+    errors.push('google needs accountId, locationId and refreshTokenEnv');
+  }
+  if (c.avgTicket != null && !(c.avgTicket > 0)) errors.push('avgTicket must be a positive number');
   if (errors.length) throw new Error(`${label}: ${errors.join('; ')}`);
 }
